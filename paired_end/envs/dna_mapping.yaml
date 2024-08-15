@@ -1,0 +1,15 @@
+# module: dna_mapping
+channels:
+  - conda-forge
+  - bioconda
+  - anaconda
+  - defaults
+dependencies:
+  - python=3
+  - fastqc=0.12.1
+  - multiqc=1.19
+  - fastp=0.23.4
+  - samtools=1.20
+  - bowtie2=2.5.3
+  - subread=2.0.6
+  - sortmerna=4.3.6

@@ -1,0 +1,8 @@
+# module: coverage
+channels:
+  - conda-forge
+  - bioconda
+  - anaconda
+  - defaults
+dependencies:
+  - circos=0.69.9
