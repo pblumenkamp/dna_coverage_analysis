@@ -1,5 +1,5 @@
 # Coverage analysis of DNASeq data
-# Input reads must be paired-end and must end with "_R1.fastq.gz" or "_R2.fastq.gz"
+# Input reads must be paired-end and must end with ".fastq.gz" or ".fastq.gz"
 
 # Input directory of all fastq.gz files
 fastq_input_dir: "input/fastq_files"
@@ -23,7 +23,7 @@ references:
     gff_features: ["CDS"]
 
 
-# Will only be used in when using Snakemake on computing cluster or when using limited memory settings
+# Will only be used in when using Snakemake on computing cluster or when using limited memory settings (--resources mem_mb=<max_ram_usage_in_mb>)
 memory_usage_in_mb:
   fastp: 3000
   sortmerna: 5000
