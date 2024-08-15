@@ -1,0 +1,8 @@
+# module: sushi
+channels:
+  - conda-forge
+  - bioconda
+  - anaconda
+  - defaults
+dependencies:
+  - bioconductor-sushi=1.31

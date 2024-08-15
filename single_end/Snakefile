@@ -1,0 +1,280 @@
+import errno
+import os
+import sys
+
+IDS, = glob_wildcards(os.path.join(config["fastq_input_dir"], "{id}.fastq.gz"))
+if len(IDS) == 0:
+    raise FileNotFoundError(
+        errno.ENOENT, "No input file found with the pattern: {}".format(os.path.join(config["fastq_input_dir"], "<sample_name>.fastq.gz")))
+
+resolutions = [int(x) for x in config["coverage_resolutions"]]
+
+def build_keywords_for_featureCounts_names(references):
+    reference_list = []
+    gff_type_list = []
+    for reference, values in references.items():
+        for feature_type in values["gff_features"]:
+            reference_list.append(reference)
+            gff_type_list.append(feature_type)
+    return reference_list,gff_type_list
+
+gff_reference_list, gff_type_list = build_keywords_for_featureCounts_names(config["references"])
+
+rule all:
+    input:
+      expand("03_{reference}/03_coverage/sushi/charts_{resolution}bp/{sample}", reference=config["references"].keys(), resolution=resolutions, sample=IDS),
+      expand("03_{reference}/02_counting/counts_{feature_type}.tsv", zip, reference=gff_reference_list, feature_type=gff_type_list),
+      expand("03_{reference}/00_multiqc/", reference=config["references"].keys())
+
+
+rule fastqc_pre:
+    input:
+        seq_data = os.path.join(config["fastq_input_dir"], "{sample}.fastq.gz")
+    output:
+        html = "01_qc/fastqc_pre/{sample}_fastqc.html",
+        zip = "01_qc/fastqc_pre/{sample}_fastqc.zip"
+    params:
+        output = "01_qc/fastqc_pre/"
+    conda:
+        "envs/dna_mapping.yaml"
+    resources:
+        mem_mb = 300
+    shell:
+        """
+        fastqc {input.seq_data} -o {params.output}
+        """
+
+rule fastp:
+    input:
+        reads = os.path.join(config["fastq_input_dir"], "{sample}.fastq.gz"),
+    output:
+        html = "01_qc/fastp/{sample, [^/]+}_fastp.html",
+        json = "01_qc/fastp/{sample, [^/]+}_fastp.json",
+        reads="01_qc/fastp/{sample, [^/]+}.fq.gz",
+    conda:
+        "envs/dna_mapping.yaml"
+    threads: 4
+    resources:
+        mem_mb = config["memory_usage_in_mb"]["fastp"]
+    shell:
+        """
+        fastp -i {input.reads} -o {output.reads} --html {output.html} --json {output.json} --disable_length_filtering --thread {threads}
+        """
+
+rule fastqc_fastp:
+    input:
+        seq_data = "01_qc/fastp/{sample}.fq.gz"
+    output:
+        html = "01_qc/fastqc_fastp/{sample}_fastqc.html",
+        zip = "01_qc/fastqc_fastp/{sample}_fastqc.zip"
+    conda:
+        "envs/dna_mapping.yaml"
+    resources:
+        mem_mb = 300
+    shell:
+        """
+        fastqc {input.seq_data} -o 01_qc/fastqc_fastp/
+        """
+
+rule sortmerna_db:
+    output:
+        db = "02_sortmerna/rRNA_databases_v4/smr_v4.3_default_db.fasta"
+    conda:
+        "envs/dna_mapping.yaml"
+    threads:
+        1
+    resources:
+        mem_mb = 200
+    shell:
+        "wget https://github.com/biocore/sortmerna/releases/download/v4.3.4/database.tar.gz && "
+        "mkdir 02_sortmerna/rRNA_databases_v4 -p && "
+        "tar -xvf database.tar.gz -C 02_sortmerna/rRNA_databases_v4; "
+        "rm database.tar.gz; rm 02_sortmerna/rRNA_databases_v4/smr_v4.3_fast* 02_sortmerna/rRNA_databases_v4/smr_v4.3_sensitive*"
+
+rule sortmerna:
+    input:
+        reads="01_qc/fastp/{sample}.fq.gz",
+        db = "02_sortmerna/rRNA_databases_v4/smr_v4.3_default_db.fasta"
+    output:
+        minus_5S = temp("02_sortmerna/{sample}.filtered.5S.fq.gz"),
+        minus_16S = temp("02_sortmerna/{sample}.filtered.5S.16S.fq.gz"),
+        minus_23S = "02_sortmerna/{sample}.filtered.5S.16S.23S.fq.gz",
+        log_file_5S = "02_sortmerna/{sample}.only.5S.log",
+        log_file_16S = "02_sortmerna/{sample}.only.16S.log",
+        log_file_23S = "02_sortmerna/{sample}.only.23S.log",
+        only_5S = "02_sortmerna/{sample}.only.5S.fq.gz",
+        only_16S = "02_sortmerna/{sample}.only.16S.fq.gz",
+        only_23S = "02_sortmerna/{sample}.only.23S.fq.gz",
+    params:
+        only_5S = "02_sortmerna/{sample}.only.5S",
+        only_16S = "02_sortmerna/{sample}.only.16S",
+        only_23S = "02_sortmerna/{sample}.only.23S",
+        minus_5S = "02_sortmerna/{sample}.filtered.5S",
+        minus_16S = "02_sortmerna/{sample}.filtered.5S.16S",
+        minus_23S = "02_sortmerna/{sample}.filtered.5S.16S.23S"
+    conda:
+        "envs/dna_mapping.yaml"
+    threads:
+        16
+    resources:
+        mem_mb = config["memory_usage_in_mb"]["sortmerna"]
+    shell:
+        "sortmerna --threads {threads} --workdir 02_sortmerna/tmp/{wildcards.sample}_5S/ --ref {input.db} --reads {input.reads} --fastx --aligned {params.only_5S} --other {params.minus_5S} && "
+        "sortmerna --threads {threads} --workdir 02_sortmerna/tmp/{wildcards.sample}_16S/ --ref {input.db} --reads {output.minus_5S} --fastx --aligned {params.only_16S} --other {params.minus_16S} && "
+        "sortmerna --threads {threads} --workdir 02_sortmerna/tmp/{wildcards.sample}_23S/ --ref {input.db} --reads {output.minus_16S}  --fastx --aligned {params.only_23S} --other {params.minus_23S} && "
+        "rm -r 02_sortmerna/tmp/{wildcards.sample}_5S/ 02_sortmerna/tmp/{wildcards.sample}_16S/ 02_sortmerna/tmp/{wildcards.sample}_23S/"
+
+
+rule bowtie2_index:
+    params:
+        prefix="03_{reference}/01_mapping/genome_index/genome"
+    input:
+        genome=lambda wildcards: config["references"][wildcards.reference]["genome"]
+    output:
+        "03_{reference}/01_mapping/genome_index/genome.1.bt2"
+    conda:
+        "envs/dna_mapping.yaml"
+    threads:
+        16
+    resources:
+        mem_mb = config["memory_usage_in_mb"]["bowtie2_index"]
+    shell:
+        "bowtie2-build --threads {threads} {input.genome} {params.prefix}"
+
+
+rule bowtie2_mapping:
+    params:
+        prefix="03_{reference}/01_mapping/genome_index/genome"
+    input:
+        genome_index="03_{reference}/01_mapping/genome_index/genome.1.bt2",
+        reads="02_sortmerna/{sample}.filtered.5S.16S.23S.fq.gz",
+    output:
+        sam = temp("03_{reference}/01_mapping/{sample}.sam"),
+        stats = "03_{reference}/01_mapping/{sample}.stats"
+    conda:
+        "envs/dna_mapping.yaml"
+    threads:
+        8
+    resources:
+        mem_mb = config["memory_usage_in_mb"]["bowtie2_mapping"]
+    shell:
+        "bowtie2 --very-sensitive -p {threads} -x {params.prefix} -U {input.reads} -S {output.sam} 2> {output.stats}"
+
+
+rule sam_to_bam:
+    input:
+        "{sample}.sam"
+    output:
+        bam = "{sample}.bam",
+        csi = "{sample}.bam.csi",
+        bam_unmapped = "{sample}_unmapped.bam"
+    conda:
+        "envs/dna_mapping.yaml"
+    threads:
+        8
+    resources:
+        mem_mb = config["memory_usage_in_mb"]["samtools_sort"]
+    shell:
+        "samtools view -hb {input} | samtools sort -@ {threads} -o {output.bam} - && samtools index -c {output.bam};"
+        "samtools view -f 4 -hb {input} > {output.bam_unmapped}"
+
+
+rule count_reads:
+    input:
+        mappings = expand("03_{{reference}}/01_mapping/{sample}.bam", sample=IDS),
+        annotation = lambda wildcards: config["references"][wildcards.reference]["annotation"]
+    output:
+        table = "03_{reference}/02_counting/counts_{type}.tsv",
+        stats = "03_{reference}/02_counting/counts_{type}.tsv.summary"
+    conda:
+        "envs/dna_mapping.yaml"
+    threads:
+        8
+    resources:
+        mem_mb = config["memory_usage_in_mb"]["featureCounts"]
+    shell:
+        """
+        featureCounts -s 1 -M --fraction -T {threads} -t '{wildcards.type}' -g 'ID' -a {input.annotation} -o {output.table} {input.mappings}
+        """
+
+rule multiqc:
+    input:
+        pre_fastqc = expand("01_qc/fastqc_pre/{sample}_fastqc.html", sample=IDS),
+        fastp_fastqc = expand("01_qc/fastqc_fastp/{sample}_fastqc.html", sample=IDS),
+        sortmerna = expand("02_sortmerna/{sample}.only.{size}S.log", sample=IDS, size=[5, 16, 23]),
+        mapping =  expand("03_{{reference}}/01_mapping/{sample}.bam", sample=IDS),
+        counting = lambda wildcards: ["03_{reference}/02_counting/counts_" + ft + ".tsv" for ft in config["references"][wildcards.reference]["gff_features"]]
+    output:
+       directory("03_{reference}/00_multiqc/")
+    priority: -100
+    conda:
+        "envs/dna_mapping.yaml"
+    resources:
+        mem_mb = 1000
+    shell:
+        "[ -e {output} ] && rm -r {output}; multiqc -o {output} --config multiqc_config.yaml 01* 02* 03_{wildcards.reference}/"
+
+rule bedtools_coverage:
+    input:
+        mappings = "03_{reference}/01_mapping/{sample}.bam"
+    output:
+        coverage_bedgraph = "03_{reference}/03_coverage/bed/{sample}.bedgraph",
+        coverage_bed = "03_{reference}/03_coverage/bed/{sample}.bed"
+    conda:
+        "envs/coverage.yaml"
+    threads:
+        1
+    resources:
+        mem_mb = config["memory_usage_in_mb"]["bedgraph_coverage"]
+    shell:
+        "bedtools genomecov -bg -ibam {input.mappings} > {output.coverage_bedgraph}; "
+        "bedtools genomecov -d -ibam {input.mappings} > {output.coverage_bed}"
+
+rule build_faidx:
+    input:
+        genome = lambda wildcards: config["references"][wildcards.reference]["genome"]
+    output:
+        index = "03_{reference}/genome.fai"
+    threads:
+        1
+    conda:
+        "envs/dna_mapping.yaml"
+    resources:
+        mem_mb = 100
+    shell:
+        "samtools faidx --fai-idx {output.index} {input.genome}"
+
+rule sushi_histogram_data:
+    input:
+        coverage = "03_{reference}/03_coverage/bed/{sample}.bedgraph",
+        faidx = "03_{reference}/genome.fai"
+    output:
+        visualization = "03_{reference}/03_coverage/sushi/data/{sample}.resolution_{resolution}bp.hist.txt"
+    threads:
+        1
+    resources:
+        mem_mb = 100
+    conda:
+        "envs/coverage.yaml"
+    shell:
+        """
+        if [ -s {input.coverage} ]; then
+            bedtools makewindows -g <(awk -v FS='\\t' -v OFS='\\t' '{{print $1, $2}}' {input.faidx}) -w {wildcards.resolution} | bedtools map -a - -b {input.coverage} -c 4 -o sum | sed 's/\\t\\./\\t0/g' > {output}
+        else
+            touch {output.visualization}
+        fi
+        """
+
+rule sushi:
+    input:
+        hist_data = "03_{reference}/03_coverage/sushi/data/{sample}.resolution_{resolution}bp.hist.txt"
+    output:
+        visualization = directory("03_{reference}/03_coverage/sushi/charts_{resolution}bp/{sample}")
+    conda:
+        "envs/sushi.yaml"
+    threads:
+        1
+    resources:
+        mem_mb = config["memory_usage_in_mb"]["sushi"]
+    shell:
+        "Rscript scripts/sushi.R {output.visualization} {wildcards.sample} {input.hist_data}"

@@ -1,0 +1,35 @@
+# Coverage analysis of DNASeq data
+# Input reads must be paired-end and must end with "_R1.fastq.gz" or "_R2.fastq.gz"
+
+# Input directory of all fastq.gz files
+fastq_input_dir: "input/fastq_files"
+
+# Base pair resolution used for coverage bar charts. Charts for all resolutions will be created
+coverage_resolutions: [1000, 100000]
+
+# Coverage analysis will be applied on all references in this list
+references:
+  xylella:
+    genome: "reference/GCF_000007245.1_ASM724v1_genomic.fna"
+    annotation: "reference/GCF_000007245.1_ASM724v1_genomic.gff"
+    gff_features: ["gene", "CDS", "rRNA", "tRNA"]
+  bradyrhizobium:
+    genome: "reference/contamination/GCF_002831585.1_ASM283158v1_genomic.fna"
+    annotation: "reference/contamination/GCF_002831585.1_genomic.gff"
+    gff_features: ["CDS", "rRNA", "tRNA"]
+  variovorax:
+    genome: "reference/contamination/GCF_033807855.1_ASM3380785v1_genomic.fna"
+    annotation: "reference/contamination/GCF_033807855.1_genomic.gff"
+    gff_features: ["CDS"]
+
+
+# Will only be used in when using Snakemake on computing cluster or when using limited memory settings
+memory_usage_in_mb:
+  fastp: 3000
+  sortmerna: 5000
+  bowtie2_index: 1500
+  bowtie2_mapping: 2000
+  samtools_sort: 3000
+  featureCounts: 1000
+  bedgraph_coverage: 1000
+  sushi: 2000
