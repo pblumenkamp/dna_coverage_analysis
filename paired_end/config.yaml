@@ -24,6 +24,7 @@ references:
 
 
 # Will only be used in when using Snakemake on computing cluster or when using limited memory settings (--resources mem_mb=<max_ram_usage_in_mb>)
+memory_usage_in_mb:
   fastp: 3000
   sortmerna: 5000
   bowtie2_index: 1500
